@@ -1,0 +1,10 @@
+
+{
+  "name": "Qamar",
+  "description": "A modern messaging application named Qamar, featuring chats, channels, and stories.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "prompt": ""
+}
