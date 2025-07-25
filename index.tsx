@@ -1,4 +1,5 @@
 
+
 import React, { useState, createContext, useContext, useEffect, useRef, useCallback, CSSProperties, useMemo } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
@@ -16,10 +17,12 @@ interface User {
   name: string;
   avatar: string;
   role: 'admin' | 'user';
+  country: string;
+  status: 'active' | 'pending';
 }
 
 interface Users {
-  [key: string]: User;
+  [key:string]: User;
 }
 
 interface Message {
@@ -58,18 +61,25 @@ interface StoryCollection {
   stories: Story[];
 }
 
+
 interface PendingRequest {
   id: string;
-  type: 'friend' | 'channel';
-  fromUserId: string;
+  type: 'friend' | 'channel' | 'userApproval';
+  fromUserId: string; // The user who made the request (always user-0 for now)
   date: Date;
+  // For channel requests
   channelName?: string;
   channelId?: string;
+  // For user approval requests
+  newUserName?: string;
+  newUserId?: string;
 }
 
 interface AdminSettings {
     forceLocalNetwork: boolean;
     adsenseClientId: string;
+    requireProfileSetup: boolean;
+    requireApprovalForNewUsers: boolean;
 }
 
 
@@ -127,11 +137,13 @@ const translations = {
     loadingChats: 'Loading...',
     noChats: 'No chats yet.',
     noChannels: 'No channels available. Request a new one to get started.',
-    addFriend: 'Add Friend',
+    createUser: 'Create User',
     friendId: 'Friend ID',
     enterFriendId: "Enter friend's ID",
     add: 'Add',
     friendRequestSent: 'Friend request sent.',
+    userCreateRequestSent: 'User creation request sent for approval.',
+    userCreated: 'User created successfully.',
     addFriendSupportMessage: 'Hello. This messenger was built with the tireless effort of our team. To support us, please watch an ad. Thank you!',
     addStory: 'Add Story',
     storyPosted: 'Story posted successfully!',
@@ -157,11 +169,17 @@ const translations = {
     reject: 'Reject',
     friendRequestFrom: 'Friend request from {name}',
     channelRequest: 'New channel request: "{name}"',
+    userApprovalRequest: 'New user registration: "{name}"',
     requestApproved: 'Request approved.',
     requestRejected: 'Request rejected.',
     networkSettings: 'Network Settings',
+    userSettings: 'User Settings',
     forceLocalNetwork: 'Force Local Network for All Users',
     forceLocalNetworkDesc: 'When enabled, all users are forced to use the local network.',
+    forceProfileSetup: 'Force Profile Setup',
+    forceProfileSetupDesc: 'When enabled, new users must set up their name and avatar before using the app.',
+    requireApproval: 'Require Admin Approval for New Users',
+    requireApprovalDesc: 'If enabled, new users must be approved by an admin before they can use the app.',
     adSettings: 'Ad Settings',
     adsenseClientId: 'Google AdSense Client ID',
     settingsSaved: 'Settings saved successfully.',
@@ -202,6 +220,11 @@ const translations = {
     watchAdToEarn: 'Watch Ad to Earn',
     earnedCredit: 'You earned {amount}! Your new balance is {balance}.',
     networkMode: 'Network Mode',
+    apiError: 'Could not connect to the server. Please check if the server is running and try again.',
+    retry: 'Retry',
+    noMessagesYet: 'No messages yet.',
+    country: 'Country',
+    selectCountry: 'Select Country',
   },
   fa: {
     chats: 'چت‌ها',
@@ -255,11 +278,13 @@ const translations = {
     loadingChats: 'در حال بارگذاری...',
     noChats: 'هنوز چتی وجود ندارد.',
     noChannels: 'هیچ کانالی موجود نیست. برای شروع یک کانال جدید درخواست دهید.',
-    addFriend: 'افزودن دوست',
+    createUser: 'ایجاد کاربر',
     friendId: 'شناسه دوست',
     enterFriendId: 'شناسه دوست را وارد کنید',
     add: 'افزودن',
     friendRequestSent: 'درخواست دوستی ارسال شد.',
+    userCreateRequestSent: 'درخواست ایجاد کاربر برای تایید ارسال شد.',
+    userCreated: 'کاربر با موفقیت ایجاد شد.',
     addFriendSupportMessage: 'سلام. این پیام‌رسان با زحمت شبانه‌روزی تیم ما ساخته شده. برای حمایت از ما، لطفاً یک تبلیغ ببینید. ممنون.',
     addStory: 'افزودن استوری',
     storyPosted: 'استوری با موفقیت ارسال شد!',
@@ -285,11 +310,17 @@ const translations = {
     reject: 'رد کردن',
     friendRequestFrom: 'درخواست دوستی از طرف {name}',
     channelRequest: 'درخواست کانال جدید: "{name}"',
+    userApprovalRequest: 'ثبت‌نام کاربر جدید: "{name}"',
     requestApproved: 'درخواست تایید شد.',
     requestRejected: 'درخواست رد شد.',
     networkSettings: 'تنظیمات شبکه',
+    userSettings: 'تنظیمات کاربری',
     forceLocalNetwork: 'اجبار به استفاده از شبکه محلی برای همه کاربران',
     forceLocalNetworkDesc: 'در صورت فعال بودن، همه کاربران مجبور به استفاده از شبکه محلی می‌شوند.',
+    forceProfileSetup: 'اجبار به تنظیم پروفایل',
+    forceProfileSetupDesc: 'در صورت فعال بودن، کاربران جدید باید قبل از استفاده از برنامه، نام و آواتار خود را تنظیم کنند.',
+    requireApproval: 'نیاز به تایید مدیر برای کاربران جدید',
+    requireApprovalDesc: 'اگر فعال باشد، کاربران جدید باید قبل از استفاده توسط مدیر تایید شوند.',
     adSettings: 'تنظیمات تبلیغات',
     adsenseClientId: 'شناسه کلاینت گوگل ادسنس',
     settingsSaved: 'تنظیمات با موفقیت ذخیره شد.',
@@ -330,6 +361,11 @@ const translations = {
     watchAdToEarn: 'برای کسب درآمد تبلیغ ببینید',
     earnedCredit: 'شما {amount} کسب کردید! موجودی جدید شما {balance} است.',
     networkMode: 'حالت شبکه',
+    apiError: 'خطا در اتصال به سرور. لطفاً از روشن بودن سرور مطمئن شوید و دوباره تلاش کنید.',
+    retry: 'تلاش مجدد',
+    noMessagesYet: 'هنوز پیامی وجود ندارد.',
+    country: 'کشور',
+    selectCountry: 'انتخاب کشور',
   },
   ar: {
     chats: 'الدردشات',
@@ -383,11 +419,13 @@ const translations = {
     loadingChats: 'جارٍ التحميل...',
     noChats: 'لا توجد دردشات بعد.',
     noChannels: 'لا توجد قنوات متاحة. اطلب قناة جديدة للبدء.',
-    addFriend: 'إضافة صديق',
+    createUser: 'إنشاء مستخدم',
     friendId: 'معرف الصديق',
     enterFriendId: 'أدخل معرف الصديق',
     add: 'إضافة',
     friendRequestSent: 'تم إرسال طلب الصداقة.',
+    userCreateRequestSent: 'تم إرسال طلب إنشاء مستخدم للموافقة.',
+    userCreated: 'تم إنشاء المستخدم بنجاح.',
     addFriendSupportMessage: 'مرحباً. تم بناء هذا الماسنجر بجهود دؤوبة من فريقنا. لدعمنا، يرجى مشاهدة إعلان. شكراً لك.',
     addStory: 'إضافة قصة',
     storyPosted: 'تم نشر القصة بنجاح!',
@@ -413,11 +451,17 @@ const translations = {
     reject: 'رفض',
     friendRequestFrom: 'طلب صداقة من {name}',
     channelRequest: 'طلب قناة جديدة: "{name}"',
+    userApprovalRequest: 'تسجيل مستخدم جديد: "{name}"',
     requestApproved: 'تمت الموافقة على الطلب.',
     requestRejected: 'تم رفض الطلب.',
     networkSettings: 'إعدادات الشبكة',
+    userSettings: 'إعدادات المستخدم',
     forceLocalNetwork: 'فرض الشبكة المحلية على جميع المستخدمين',
     forceLocalNetworkDesc: 'عند التمكين، يتم إجبار جميع المستخدمين على استخدام الشبكة المحلية.',
+    forceProfileSetup: 'إجبار إعداد الملف الشخصي',
+    forceProfileSetupDesc: 'عند التمكين، يجب على المستخدمين الجدد إعداد أسمائهم وصورهم الرمزية قبل استخدام التطبيق.',
+    requireApproval: 'يتطلب موافقة المسؤول للمستخدمين الجدد',
+    requireApprovalDesc: 'إذا تم تمكينه، يجب على المستخدمين الجدد الحصول على موافقة من المسؤول قبل أن يتمكنوا من استخدام التطبيق.',
     adSettings: 'إعدادات الإعلانات',
     adsenseClientId: 'معرف عميل Google AdSense',
     settingsSaved: 'تم حفظ الإعدادات بنجاح.',
@@ -458,6 +502,11 @@ const translations = {
     watchAdToEarn: 'شاهد إعلانًا للكسب',
     earnedCredit: 'لقد ربحت {amount}! رصيدك الجديد هو {balance}.',
     networkMode: 'وضع الشبكة',
+    apiError: 'خطأ في الاتصال بالخادم. يرجى التحقق من تشغيل الخادم والمحاولة مرة أخرى.',
+    retry: 'إعادة المحاولة',
+    noMessagesYet: 'لا توجد رسائل بعد.',
+    country: 'البلد',
+    selectCountry: 'اختر البلد',
   },
   ps: {
     chats: 'چټونه',
@@ -511,11 +560,13 @@ const translations = {
     loadingChats: 'بارول...',
     noChats: 'تر اوسه کوم چټ نشته.',
     noChannels: 'کوم کانال نشته. د پیل کولو لپاره د نوي کانال غوښتنه وکړئ.',
-    addFriend: 'ملګری اضافه کړئ',
+    createUser: 'کارن جوړ کړئ',
     friendId: 'د ملګري ID',
     enterFriendId: 'د ملګري ID داخل کړئ',
     add: 'اضافه کول',
     friendRequestSent: 'د ملګرتیا غوښتنه واستول شوه.',
+    userCreateRequestSent: 'د کارن جوړولو غوښتنه د تایید لپاره واستول شوه.',
+    userCreated: 'کارن په بریالیتوب سره جوړ شو.',
     addFriendSupportMessage: 'سلام. دا مسنجر زموږ د ټیم د نه ستړي کیدونکو هڅو په پایله کې جوړ شوی دی. زموږ د ملاتړ لپاره، مهرباني وکړئ یو اعلان وګورئ. مننه.',
     addStory: 'کیسه اضافه کړئ',
     storyPosted: 'کیسه په بریالیتوب سره خپره شوه!',
@@ -541,11 +592,17 @@ const translations = {
     reject: 'ردول',
     friendRequestFrom: 'د {name} لخوا د ملګرتیا غوښتنه',
     channelRequest: 'د نوي کانال غوښتنه: "{name}"',
+    userApprovalRequest: 'د نوي کارن ثبت کول: "{name}"',
     requestApproved: 'غوښتنه تایید شوه.',
     requestRejected: 'غوښتنه رد شوه.',
     networkSettings: 'د شبکې تنظیمات',
+    userSettings: 'د کارن تنظیمات',
     forceLocalNetwork: 'ټول کاروونکي محلي شبکې کارولو ته اړ کړئ',
     forceLocalNetworkDesc: 'کله چې فعال شي، ټول کاروونکي د محلي شبکې کارولو ته اړ کیږي.',
+    forceProfileSetup: 'د پروفایل تنظیم مجبورول',
+    forceProfileSetupDesc: 'کله چې فعال شي، نوي کاروونکي باید د اپلیکیشن کارولو دمخه خپل نوم او اوتار تنظیم کړي.',
+    requireApproval: 'د نویو کاروونکو لپاره د مدیر تایید ته اړتیا ده',
+    requireApprovalDesc: 'که فعال وي، نوي کاروونکي باید د اپلیکیشن کارولو دمخه د مدیر لخوا تایید شي.',
     adSettings: 'د اعلانونو تنظیمات',
     adsenseClientId: 'د ګوګل اډسینس پیرودونکي ID',
     settingsSaved: 'تنظیمات په بریالیتوب سره خوندي شول.',
@@ -586,6 +643,11 @@ const translations = {
     watchAdToEarn: 'د ګټلو لپاره اعلان وګورئ',
     earnedCredit: 'تاسو {amount} وګټل! ستاسو نوی بیلانس {balance} دی.',
     networkMode: 'د شبکې حالت',
+    apiError: 'سرور سره په نښلولو کې تېروتنه. مهرباني وکړئ ډاډ ترلاسه کړئ چې سرور چلیږي او بیا هڅه وکړئ.',
+    retry: 'بیا هڅه وکړئ',
+    noMessagesYet: 'تر اوسه کوم پیغام نشته.',
+    country: 'هیواد',
+    selectCountry: 'هیواد وټاکئ',
   },
 };
 
@@ -628,27 +690,6 @@ const LanguageProvider = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
-// --- MOCK DATA ---
-const initialUsers: Users = {
-  'user-0': { id: 'user-0', name: 'Me', avatar: 'https://i.pravatar.cc/150?u=user-0', role: 'admin' },
-  'user-1': { id: 'user-1', name: 'Alex', avatar: 'https://i.pravatar.cc/150?u=user-1', role: 'user' },
-};
-
-const initialChats: Chat[] = [];
-
-const initialChannels: Channel[] = [];
-
-const initialStories: StoryCollection[] = [];
-
-const initialPendingRequests: PendingRequest[] = [
-    {
-        id: 'req-friend-1',
-        type: 'friend',
-        fromUserId: 'user-1',
-        date: new Date(Date.now() - 86400000), // 1 day ago
-    }
-];
-
 // --- UTILITY FUNCTIONS ---
 const formatDate = (timestamp: number, t: (key: string, replacements?: Record<string, string>) => string) => {
   const date = new Date(timestamp);
@@ -673,6 +714,167 @@ const formatTime = (totalSeconds: number) => {
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = Math.floor(totalSeconds % 60);
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+};
+
+const COUNTRIES = ["Afghanistan","Albania","Algeria","Andorra","Angola","Antigua and Barbuda","Argentina","Armenia","Australia","Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belarus","Belgium","Belize","Benin","Bhutan","Bolivia","Bosnia and Herzegovina","Botswana","Brazil","Brunei","Bulgaria","Burkina Faso","Burundi","Cabo Verde","Cambodia","Cameroon","Canada","Central African Republic","Chad","Chile","China","Colombia","Comoros","Congo, Democratic Republic of the","Congo, Republic of the","Costa Rica","Cote d'Ivoire","Croatia","Cuba","Cyprus","Czechia","Denmark","Djibouti","Dominica","Dominican Republic","Ecuador","Egypt","El Salvador","Equatorial Guinea","Eritrea","Estonia","Eswatini","Ethiopia","Fiji","Finland","France","Gabon","Gambia","Georgia","Germany","Ghana","Greece","Grenada","Guatemala","Guinea","Guinea-Bissau","Guyana","Haiti","Honduras","Hungary","Iceland","India","Indonesia","Iran","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kiribati","Kosovo","Kuwait","Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg","Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania","Mauritius","Mexico","Micronesia","Moldova","Monaco","Mongolia","Montenegro","Morocco","Mozambique","Myanmar","Namibia","Nauru","Nepal","Netherlands","New Zealand","Nicaragua","Niger","Nigeria","North Korea","North Macedonia","Norway","Oman","Pakistan","Palau","Palestine State","Panama","Papua New Guinea","Paraguay","Peru","Philippines","Poland","Portugal","Qatar","Romania","Russia","Rwanda","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Samoa","San Marino","Sao Tome and Principe","Saudi Arabia","Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Slovakia","Slovenia","Solomon Islands","Somalia","South Africa","South Korea","South Sudan","Spain","Sri Lanka","Sudan","Suriname","Sweden","Switzerland","Syria","Taiwan","Tajikistan","Tanzania","Thailand","Timor-Leste","Togo","Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Tuvalu","Uganda","Ukraine","United Arab Emirates","United Kingdom","United States of America","Uruguay","Uzbekistan","Vanuatu","Vatican City","Venezuela","Vietnam","Yemen","Zambia","Zimbabwe"];
+
+
+// --- API (Connects to Backend Server) ---
+
+// DEVELOPMENT NOTE:
+// By default, this app uses the Vite proxy to connect to the server.
+// It assumes the server is running on `http://localhost:3001`.
+// This works perfectly if you run both client and server on the same machine.
+const API_BASE_URL = '/api';
+
+// FOR REMOTE SERVER (like a phone with Termux):
+// If your server is on a different device on your Wi-Fi network,
+// 1. Comment out the line above (`const API_BASE_URL = '/api';`).
+// 2. Uncomment the line below.
+// 3. Replace 'YOUR_PHONE_IP_ADDRESS' with your phone's actual IP address (e.g., 192.168.1.10).
+// const API_BASE_URL = 'http://YOUR_PHONE_IP_ADDRESS:3001/api';
+
+
+const api = {
+    // Helper function for making API requests
+    _request: async (endpoint: string, options: RequestInit = {}) => {
+        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers,
+            },
+        });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: 'Unknown server error' }));
+            throw new Error(errorData.message || 'Network response was not ok');
+        }
+        // For DELETE requests or others that might not return a body
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+            return response.json();
+        }
+        return { success: true };
+    },
+
+    getInitialData: async (): Promise<any> => {
+        const data = await api._request('/data');
+        // Convert date strings back to Date objects
+        if (data && Array.isArray(data.pendingRequests)) {
+            data.pendingRequests = data.pendingRequests.map(r => ({ ...r, date: new Date(r.date) }));
+        }
+        return data;
+    },
+
+    setupProfile: async (name: string, avatar: string, country: string): Promise<User> => {
+        return api._request('/profile/setup', {
+            method: 'POST',
+            body: JSON.stringify({ name, avatar, country }),
+        });
+    },
+
+    updateProfile: async (updatedUser: User): Promise<User> => {
+        return api._request('/profile', {
+            method: 'PUT',
+            body: JSON.stringify(updatedUser),
+        });
+    },
+
+    requestChannel: async (name: string): Promise<{ newChannel: Channel, newRequest: PendingRequest }> => {
+        return api._request('/channels/request', {
+            method: 'POST',
+            body: JSON.stringify({ name }),
+        });
+    },
+    
+    createUser: async (name: string, country: string): Promise<{ users: Users, chats: Chat[], request?: PendingRequest }> => {
+        return api._request('/users/create', {
+            method: 'POST',
+            body: JSON.stringify({ name, country }),
+        });
+    },
+    
+    postStory: async (newStory: Story): Promise<StoryCollection[]> => {
+        return api._request('/stories', {
+            method: 'POST',
+            body: JSON.stringify(newStory),
+        });
+    },
+
+    sendMessage: async (conversationId: string, text: string, isChannel: boolean): Promise<{ sentMessage: Message, replyMessage?: Message }> => {
+        return api._request('/messages/send', {
+            method: 'POST',
+            body: JSON.stringify({ conversationId, text, isChannel }),
+        });
+    },
+    
+    unlockPremiumTask: async (): Promise<{ newCount: number; isNowPremium: boolean; premiumEndTime?: number }> => {
+        return api._request('/premium/unlock', { method: 'POST' });
+    },
+
+    checkAndExpirePremium: async (): Promise<boolean> => {
+        const { isPremium } = await api._request('/premium/status');
+        return isPremium;
+    },
+
+    earnCredits: async (): Promise<{ newBalance: number }> => {
+        return api._request('/earnings/earn', { method: 'POST' });
+    },
+
+    updateUserRole: async (userId: string, role: 'admin' | 'user'): Promise<Users> => {
+        return api._request(`/admin/users/${userId}/role`, {
+            method: 'PUT',
+            body: JSON.stringify({ role }),
+        });
+    },
+    
+    saveAdminSettings: async (newSettings: AdminSettings): Promise<AdminSettings> => {
+        return api._request('/admin/settings', {
+            method: 'POST',
+            body: JSON.stringify(newSettings),
+        });
+    },
+
+    approveRequest: async (reqId: string): Promise<{ requests: PendingRequest[], channels: Channel[], chats: Chat[], users: Users }> => {
+        const data = await api._request(`/admin/requests/${reqId}/approve`, { method: 'POST' });
+        data.requests = data.requests.map(r => ({ ...r, date: new Date(r.date) }));
+        return data;
+    },
+
+    rejectRequest: async (reqId: string): Promise<{ requests: PendingRequest[], channels: Channel[], users: Users }> => {
+        const data = await api._request(`/admin/requests/${reqId}/reject`, { method: 'POST' });
+        data.requests = data.requests.map(r => ({ ...r, date: new Date(r.date) }));
+        return data;
+    },
+
+    toggleLocalNetwork: async (): Promise<boolean> => {
+        const { isLocalNetwork } = await api._request('/network/toggle', { method: 'POST' });
+        return isLocalNetwork;
+    },
+
+    changeAdminPassword: async (currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
+        try {
+            await api._request('/admin/password/change', {
+                method: 'POST',
+                body: JSON.stringify({ currentPassword, newPassword }),
+            });
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: (error as Error).message };
+        }
+    },
+
+    removeAdminPassword: async (currentPassword: string): Promise<{ success: boolean; error?: string }> => {
+       try {
+            await api._request('/admin/password/remove', {
+                method: 'POST',
+                body: JSON.stringify({ currentPassword }),
+            });
+            return { success: true };
+        } catch (error) {
+            return { success: false, error: (error as Error).message };
+        }
+    },
 };
 
 
@@ -711,7 +913,7 @@ const Icon = ({ type, className = '', style }: { type: string, className?: strin
   return <svg xmlns="http://www.w3.org/2000/svg" className={`sidebar-icon ${className}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" style={style}>{icons[type]}</svg>;
 };
 
-const Spinner = () => <div className="spinner"></div>;
+const Spinner = ({ small }: { small?: boolean }) => <div className={`spinner ${small ? 'small' : ''}`}></div>;
 
 const LoadingScreen = () => {
     const { t } = useI18N();
@@ -722,6 +924,21 @@ const LoadingScreen = () => {
         </div>
     );
 };
+
+const ErrorScreen = ({ messageKey, onRetry }: { messageKey: string, onRetry: () => void }) => {
+    const { t } = useI18N();
+    return (
+        <div className="loading-container" style={{ textAlign: 'center', padding: '20px' }}>
+            <p style={{ color: 'var(--danger-red)', marginBottom: '20px', maxWidth: '300px' }}>
+                {t(messageKey)}
+            </p>
+            <button onClick={onRetry} className="setup-submit-btn" style={{ minWidth: '120px' }}>
+                {t('retry')}
+            </button>
+        </div>
+    );
+};
+
 
 const Toast = ({ message }: { message: string }) => {
     if (!message) return null;
@@ -755,9 +972,9 @@ const ConfirmationModal = ({ isOpen, onCancel, onConfirm, title, message }: { is
     );
 };
 
-const ToggleSwitch = ({ checked, onChange }: { checked: boolean, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void }) => (
+const ToggleSwitch = ({ checked, onChange, disabled }: { checked: boolean, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, disabled?: boolean }) => (
     <label className="toggle-switch">
-        <input type="checkbox" checked={checked} onChange={onChange} />
+        <input type="checkbox" checked={checked} onChange={onChange} disabled={disabled} />
         <span className="slider"></span>
     </label>
 );
@@ -803,6 +1020,7 @@ const BottomNavBar = ({ activePanel, setActivePanel, t }: { activePanel: string,
 
 const StoriesBar = ({ users, stories, onStoryView, onAddStory, t }: { users: Users, stories: StoryCollection[], onStoryView: (userId: string) => void, onAddStory: () => void, t: (key: string) => string }) => {
   const me = users['user-0'];
+  if (!me) return null;
   const friendsWithStories = Object.values(users).filter(u => u.id !== 'user-0' && stories.some(s => s.userId === u.id));
 
   return (
@@ -853,13 +1071,13 @@ const AdSenseBlock = () => {
     );
 };
 
-const ChatListPanel = ({ chats, users, activeChatId, onSelectChat, onAddFriend, onAddStory, onStoryView, stories, t }: { chats: Chat[], users: Users, activeChatId: string | null, onSelectChat: (id: string) => void, onAddFriend: () => void, onAddStory: () => void, onStoryView: (id: string) => void, stories: StoryCollection[], t: (key: string, replacements?: Record<string, string>) => string }) => {
+const ChatListPanel = ({ chats, users, activeChatId, onSelectChat, onCreateUser, onAddStory, onStoryView, stories, t }: { chats: Chat[], users: Users, activeChatId: string | null, onSelectChat: (id: string) => void, onCreateUser: () => void, onAddStory: () => void, onStoryView: (id: string) => void, stories: StoryCollection[], t: (key: string, replacements?: Record<string, string>) => string }) => {
   return (
     <div className="chat-list-panel">
       <div className="chat-list-header">
          <h1>{t('chats')}</h1>
          <div className="chat-list-header-actions">
-            <button onClick={onAddFriend} className="new-channel-btn" style={{ padding: '8px', borderRadius: '50%' }} aria-label={t('addFriend')}>
+            <button onClick={onCreateUser} className="new-channel-btn" style={{ padding: '8px', borderRadius: '50%' }} aria-label={t('createUser')}>
                 <Icon type="add" />
             </button>
          </div>
@@ -872,7 +1090,7 @@ const ChatListPanel = ({ chats, users, activeChatId, onSelectChat, onAddFriend, 
         ) : (
           chats.map(chat => {
             const user = users[chat.userId];
-            if (!user) return null;
+            if (!user || user.status !== 'active') return null; // Safeguard and hide pending/inactive users
             const lastMessage = chat.messages[chat.messages.length - 1];
             return (
               <div
@@ -886,9 +1104,9 @@ const ChatListPanel = ({ chats, users, activeChatId, onSelectChat, onAddFriend, 
                 <div className="chat-details">
                   <div className="chat-header">
                     <span className="chat-name">{user.name}</span>
-                    <span className="chat-timestamp">{formatDate(lastMessage.timestamp, t)}</span>
+                    <span className="chat-timestamp">{lastMessage ? formatDate(lastMessage.timestamp, t) : ''}</span>
                   </div>
-                  <p className="chat-message">{lastMessage.text}</p>
+                  <p className="chat-message">{lastMessage ? lastMessage.text : t('noMessagesYet')}</p>
                 </div>
               </div>
             );
@@ -955,7 +1173,11 @@ const ChannelListPanel = ({ channels, activeChannelId, onSelectChannel, onNewCha
     );
 };
 
-const MenuPanel = ({ currentUser, onEditProfile, onShowPremium, onShowAdmin, onShowSettings, onShowSupport, onShowEarnings, t, onGoBack, isPremium, onLogout, lang, setLang, isLocalNetwork, onToggleNetwork }: { currentUser: User, onEditProfile: () => void, onShowPremium: () => void, onShowAdmin: () => void, onShowSettings: () => void, onShowSupport: () => void, onShowEarnings: () => void, t: (key: string) => string, onGoBack: () => void, isPremium: boolean, onLogout: () => void, lang: string, setLang: (l: string) => void, isLocalNetwork: boolean, onToggleNetwork: () => void }) => {
+const MenuPanel = ({ currentUser, onEditProfile, onShowPremium, onShowAdmin, onShowSettings, onShowSupport, onShowEarnings, t, onGoBack, isPremium, onLogout, lang, setLang, isLocalNetwork, onToggleNetwork, isNetworkToggleDisabled }: { currentUser: User, onEditProfile: () => void, onShowPremium: () => void, onShowAdmin: () => void, onShowSettings: () => void, onShowSupport: () => void, onShowEarnings: () => void, t: (key: string) => string, onGoBack: () => void, isPremium: boolean, onLogout: () => void, lang: string, setLang: (l: string) => void, isLocalNetwork: boolean, onToggleNetwork: () => void, isNetworkToggleDisabled: boolean }) => {
+    // Safeguard against rendering with incomplete data
+    if (!currentUser || !currentUser.avatar) {
+        return null;
+    }
     return (
       <div className="menu-panel">
         <div className="chat-list-header">
@@ -1002,7 +1224,7 @@ const MenuPanel = ({ currentUser, onEditProfile, onShowPremium, onShowAdmin, onS
                      <div className="profile-menu-item no-hover">
                         <div className="profile-menu-icon"><Icon type={isLocalNetwork ? "wifi" : "globe"} /></div>
                         <span className="profile-menu-title">{t('networkMode')}</span>
-                        <div style={{marginLeft: 'auto'}}><ToggleSwitch checked={!isLocalNetwork} onChange={onToggleNetwork} /></div>
+                        <div style={{marginLeft: 'auto'}}><ToggleSwitch checked={!isLocalNetwork} onChange={onToggleNetwork} disabled={isNetworkToggleDisabled} /></div>
                     </div>
                 </div>
 
@@ -1103,10 +1325,19 @@ const NewChannelModal = ({ isOpen, onClose, onSubmit, t }) => {
 const EditProfileModal = ({ isOpen, onClose, user, onSave, t }) => {
     const [name, setName] = useState(user.name);
     const [avatar, setAvatar] = useState(user.avatar);
+    const [country, setCountry] = useState(user.country || '');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    useEffect(() => {
+        if(isOpen) {
+            setName(user.name);
+            setAvatar(user.avatar);
+            setCountry(user.country || '');
+        }
+    }, [isOpen, user]);
+
     const handleSave = () => {
-        onSave({ ...user, name, avatar });
+        onSave({ ...user, name, avatar, country });
         onClose();
     };
     
@@ -1142,6 +1373,16 @@ const EditProfileModal = ({ isOpen, onClose, user, onSave, t }) => {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
             />
+             <label htmlFor="profile-country" className="form-label">{t('country')}</label>
+            <select
+              id="profile-country"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              required
+            >
+              <option value="" disabled>{t('selectCountry')}</option>
+              {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
             <div className="modal-actions">
                 <button onClick={onClose} className="btn-secondary">{t('cancel')}</button>
                 <button onClick={handleSave} className="btn-primary">{t('save')}</button>
@@ -1150,31 +1391,42 @@ const EditProfileModal = ({ isOpen, onClose, user, onSave, t }) => {
     );
 };
 
-const AddFriendModal = ({ isOpen, onClose, onAdd, t }) => {
-    const [id, setId] = useState('');
+const CreateUserModal = ({ isOpen, onClose, onCreate, t }) => {
+    const [name, setName] = useState('');
+    const [country, setCountry] = useState('');
 
-    const handleAdd = () => {
-        if(id.trim()) {
-            onAdd(id.trim());
-            setId('');
+    const handleCreate = () => {
+        if(name.trim() && country) {
+            onCreate(name.trim(), country);
+            setName('');
+            setCountry('');
             onClose();
         }
     };
     
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={t('addFriend')}>
-            <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '14px', margin: '0 0 15px 0' }}>{t('addFriendSupportMessage')}</p>
-            <label htmlFor="friend-id" className="form-label">{t('friendId')}</label>
+        <Modal isOpen={isOpen} onClose={onClose} title={t('createUser')}>
+            <label htmlFor="user-name" className="form-label">{t('name')}</label>
             <input
-                id="friend-id"
+                id="user-name"
                 type="text"
-                placeholder={t('enterFriendId')}
-                value={id}
-                onChange={(e) => setId(e.target.value)}
+                placeholder={t('yourNameToAppear')}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
             />
+            <label htmlFor="user-country" className="form-label">{t('country')}</label>
+            <select
+              id="user-country"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              required
+            >
+              <option value="" disabled>{t('selectCountry')}</option>
+              {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
              <div className="modal-actions">
                 <button onClick={onClose} className="btn-secondary">{t('cancel')}</button>
-                <button onClick={handleAdd} className="btn-primary" disabled={!id.trim()}>{t('add')}</button>
+                <button onClick={handleCreate} className="btn-primary" disabled={!name.trim() || !country}>{t('add')}</button>
             </div>
         </Modal>
     );
@@ -1444,14 +1696,14 @@ interface AdminPanelModalProps {
     onClose: () => void;
     t: (key: string, replacements?: Record<string, string>) => string;
     users: Users;
-    onUpdateUserRole: (userId: string) => void;
+    onUpdateUserRole: (userId: string, role: 'admin' | 'user') => void;
     pendingRequests: PendingRequest[];
     onApproveRequest: (reqId: string) => void;
     onRejectRequest: (reqId: string) => void;
     settings: AdminSettings;
     onSaveSettings: (settings: AdminSettings) => void;
-    onChangePassword: (current: string, newPass: string) => string | null;
-    onRemovePassword: () => void;
+    onChangePassword: (current: string, newPass: string) => Promise<string | null>;
+    onRemovePassword: (current: string) => Promise<string | null>;
     hasPassword?: boolean;
 }
 
@@ -1475,7 +1727,8 @@ const AdminPanelModal = ({ isOpen, onClose, t, users, onUpdateUserRole, pendingR
 
     const handleConfirmRoleChange = () => {
         if (confirmRoleModal.user) {
-            onUpdateUserRole(confirmRoleModal.user.id);
+            const newRole = confirmRoleModal.user.role === 'admin' ? 'user' : 'admin';
+            onUpdateUserRole(confirmRoleModal.user.id, newRole);
         }
         setConfirmRoleModal({ isOpen: false, user: null });
     };
@@ -1484,16 +1737,16 @@ const AdminPanelModal = ({ isOpen, onClose, t, users, onUpdateUserRole, pendingR
         onSaveSettings(localSettings);
     };
     
-    const handlePasswordChange = () => {
+    const handlePasswordChange = async () => {
         setPasswordError('');
         if (newPassword !== confirmNewPassword) {
             setPasswordError(t('passwordMismatch'));
             return;
         }
         
-        const error = onChangePassword(currentPassword, newPassword);
+        const error = await onChangePassword(currentPassword, newPassword);
         if(error) {
-            setPasswordError(error);
+            setPasswordError(t(error));
         } else {
              setCurrentPassword('');
              setNewPassword('');
@@ -1501,9 +1754,15 @@ const AdminPanelModal = ({ isOpen, onClose, t, users, onUpdateUserRole, pendingR
         }
     }
     
-    const handleConfirmRemovePassword = () => {
-        onRemovePassword();
-        setConfirmPassRemovalModal(false);
+    const handleConfirmRemovePassword = async () => {
+        setPasswordError('');
+        const error = await onRemovePassword(currentPassword);
+         if(error) {
+            setPasswordError(t(error));
+        } else {
+            setConfirmPassRemovalModal(false);
+            setCurrentPassword('');
+        }
     }
 
 
@@ -1541,13 +1800,27 @@ const AdminPanelModal = ({ isOpen, onClose, t, users, onUpdateUserRole, pendingR
                 <div className="request-list">
                    {pendingRequests.length === 0 ? <p>{t('noPendingRequests')}</p> : pendingRequests.map(req => {
                         const fromUser = users[req.fromUserId];
-                        const message = req.type === 'friend' 
-                            ? t('friendRequestFrom', {name: fromUser?.name || 'Unknown User'}) 
-                            : t('channelRequest', {name: req.channelName});
+                        let message = '';
+                        let requestorAvatar = fromUser?.avatar;
+                        
+                        switch(req.type) {
+                            case 'friend':
+                                message = t('friendRequestFrom', {name: fromUser?.name || 'Unknown User'});
+                                break;
+                            case 'channel':
+                                message = t('channelRequest', {name: req.channelName || ''});
+                                break;
+                            case 'userApproval':
+                                message = t('userApprovalRequest', {name: req.newUserName || ''});
+                                requestorAvatar = `https://i.pravatar.cc/150?u=${encodeURIComponent(req.newUserName || 'default')}`;
+                                break;
+                            default:
+                                message = 'Unknown request';
+                        }
                        
                        return (
                             <div key={req.id} className="request-item">
-                                <img src={fromUser?.avatar} alt={fromUser?.name} className="chat-avatar" style={{width: '40px', height: '40px'}}/>
+                                <img src={requestorAvatar} alt={fromUser?.name} className="chat-avatar" style={{width: '40px', height: '40px'}}/>
                                 <div className="request-info">
                                     <strong>{message}</strong>
                                     <span>{formatDate(req.date.getTime(), t)}</span>
@@ -1565,6 +1838,20 @@ const AdminPanelModal = ({ isOpen, onClose, t, users, onUpdateUserRole, pendingR
             {/* Settings Section */}
             <div className="admin-section">
                 <h4 className="admin-section-header"><Icon type="settings" />{t('settings')}</h4>
+                {/* User Settings */}
+                <div className="admin-form-group">
+                    <label>{t('userSettings')}</label>
+                     <div className="admin-setting-item">
+                        <div className="admin-setting-text">
+                            <strong>{t('requireApproval')}</strong>
+                            <p>{t('requireApprovalDesc')}</p>
+                        </div>
+                        <ToggleSwitch
+                            checked={localSettings.requireApprovalForNewUsers}
+                            onChange={e => setLocalSettings(prev => ({ ...prev, requireApprovalForNewUsers: e.target.checked }))}
+                        />
+                    </div>
+                </div>
                  {/* Network Settings */}
                 <div className="admin-form-group">
                     <label>{t('networkSettings')}</label>
@@ -1576,6 +1863,16 @@ const AdminPanelModal = ({ isOpen, onClose, t, users, onUpdateUserRole, pendingR
                         <ToggleSwitch
                             checked={localSettings.forceLocalNetwork}
                             onChange={e => setLocalSettings(prev => ({ ...prev, forceLocalNetwork: e.target.checked }))}
+                        />
+                    </div>
+                    <div className="admin-setting-item" style={{marginTop: '10px'}}>
+                        <div className="admin-setting-text">
+                            <strong>{t('forceProfileSetup')}</strong>
+                            <p>{t('forceProfileSetupDesc')}</p>
+                        </div>
+                        <ToggleSwitch
+                            checked={localSettings.requireProfileSetup}
+                            onChange={e => setLocalSettings(prev => ({ ...prev, requireProfileSetup: e.target.checked }))}
                         />
                     </div>
                 </div>
@@ -1599,8 +1896,7 @@ const AdminPanelModal = ({ isOpen, onClose, t, users, onUpdateUserRole, pendingR
                 <h4 className="admin-section-header"><Icon type="shield" />{t('accountSettings')}</h4>
                 <div className="admin-form-group" style={{gap: '20px'}}>
                     <div>
-                        <label>{t('changePassword')}</label>
-                        <p style={{fontSize: '13px', color: 'var(--text-secondary)'}}>{hasPassword ? t('currentPassword') : t('setPassword')}</p>
+                        <label>{hasPassword ? t('changePassword') : t('setPassword')}</label>
                     </div>
                     {hasPassword && <input type="password" placeholder={t('currentPassword')} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} />}
                     <input type="password" placeholder={t('newPassword')} value={newPassword} onChange={e => setNewPassword(e.target.value)} />
@@ -1669,7 +1965,7 @@ const StoryViewer = ({ collection, users, onClose, onNextUser, onPrevUser }: { c
 
     const goToPrevStory = () => {
         if (currentStoryIndex > 0) {
-            setCurrentStoryIndex(prev => prev - 1);
+            setCurrentStoryIndex(prev => prev + 1);
         } else {
             onPrevUser();
         }
@@ -1702,7 +1998,7 @@ const StoryViewer = ({ collection, users, onClose, onNextUser, onPrevUser }: { c
 
 
     return (
-        <div className="story-viewer-backdrop" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleMouseUp}>
+        <div className="story-viewer-backdrop" onMouseDown={handleMouseDown} onMouseUp={handleMouseUp} onTouchStart={handleMouseDown} onTouchEnd={handleMouseDown}>
             <div className="story-viewer-container" onClick={e => e.stopPropagation()}>
                 <div className="story-progress-bars">
                     {collection.stories.map((s, index) => (
@@ -1763,7 +2059,7 @@ const CallScreen = ({ user, onEndCall, t, callType }: { user: User, onEndCall: (
     );
 };
 
-const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }: { active: boolean, onBack: () => void, chat: Chat | Channel | null, users: Users, t: (key: string, replacements?: Record<string, string>) => string, onSendMessage: (text: string) => void, isTyping: boolean }) => {
+const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping, isSending }: { active: boolean, onBack: () => void, chat: Chat | Channel | null, users: Users, t: (key: string, replacements?: Record<string, string>) => string, onSendMessage: (text: string) => void, isTyping: boolean, isSending: boolean }) => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [newMessage, setNewMessage] = useState('');
     const [callState, setCallState] = useState<{ active: boolean, type: 'voice' | 'video' }>({ active: false, type: 'voice' });
@@ -1771,7 +2067,7 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
     const currentUser = users['user-0'];
     
     const handleSendMessage = () => {
-        if (newMessage.trim() === '') return;
+        if (newMessage.trim() === '' || isSending) return;
         onSendMessage(newMessage.trim());
         setNewMessage('');
     };
@@ -1783,7 +2079,7 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
     useEffect(scrollToBottom, [chat?.messages]);
     
 
-    if (!chat) {
+    if (!chat || !currentUser) {
         return (
             <div className={`chat-window welcome`}>
                 <div className="chat-window-content">
@@ -1795,7 +2091,7 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
         );
     }
     
-    const targetUser = !isChannel ? users[(chat as Chat).userId] : null;
+    const targetUser = !isChannel && chat && 'userId' in chat ? users[(chat as Chat).userId] : null;
 
     return (
         <div className={`chat-window ${active ? 'active' : ''}`}>
@@ -1804,9 +2100,9 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
                     <Icon type="back" />
                 </button>
                 <div className="chat-window-header-info">
-                    <img src={isChannel ? (chat as Channel).avatar : targetUser.avatar} alt={isChannel ? (chat as Channel).name : targetUser.name} className="chat-avatar" />
+                    <img src={isChannel ? (chat as Channel).avatar : targetUser?.avatar} alt={isChannel ? (chat as Channel).name : targetUser?.name} className="chat-avatar" />
                     <div>
-                        <span className="chat-name">{isChannel ? (chat as Channel).name : targetUser.name}</span>
+                        <span className="chat-name">{isChannel ? (chat as Channel).name : targetUser?.name}</span>
                          {isTyping && !isChannel && <span className="typing-status">typing...</span>}
                     </div>
                 </div>
@@ -1824,6 +2120,7 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
             <div className="chat-messages-area">
                 {chat.messages.map(message => {
                     const sender = isChannel ? users[message.sender] : (message.sender === currentUser.id ? currentUser : targetUser);
+                    if (!sender) return null; // Gracefully handle if sender not found
                     const isSent = message.sender === currentUser.id;
                     return (
                         <div key={message.id} className={`message-container ${isSent ? 'sent' : 'received'}`}>
@@ -1838,7 +2135,7 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
                         </div>
                     )
                 })}
-                {isTyping && !isChannel && (
+                {isTyping && !isChannel && targetUser && (
                   <div className="message-container received">
                     <img src={targetUser.avatar} alt={targetUser.name} className="chat-avatar" style={{width: '30px', height: '30px'}}/>
                     <div className="message-bubble typing-indicator">
@@ -1858,8 +2155,8 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                     disabled={(isChannel && (chat as Channel).status === 'pending')}
                 />
-                <button className="send-btn" onClick={handleSendMessage} disabled={(isChannel && (chat as Channel).status === 'pending')}>
-                    <Icon type="send" />
+                <button className="send-btn" onClick={handleSendMessage} disabled={(isChannel && (chat as Channel).status === 'pending') || isSending}>
+                    {isSending ? <Spinner small /> : <Icon type="send" />}
                 </button>
             </div>
             
@@ -1873,6 +2170,8 @@ const ChatWindow = ({ active, onBack, chat, users, t, onSendMessage, isTyping }:
 const UserSetupScreen = ({ onSetupComplete, t }) => {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState('https://i.pravatar.cc/150?u=user-0');
+  const [country, setCountry] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAvatarClick = () => {
@@ -1890,10 +2189,12 @@ const UserSetupScreen = ({ onSetupComplete, t }) => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim()) {
-      onSetupComplete(name.trim(), avatar);
+    if (name.trim() && country && !isSaving) {
+        setIsSaving(true);
+        await onSetupComplete(name.trim(), avatar, country);
+        // No need to set isSaving back to false, as the component will unmount
     }
   };
 
@@ -1921,7 +2222,21 @@ const UserSetupScreen = ({ onSetupComplete, t }) => {
               required
             />
           </div>
-          <button type="submit" className="setup-submit-btn" disabled={!name.trim()}>{t('startMessaging')}</button>
+           <div className="setup-input-group">
+            <label htmlFor="user-country">{t('country')}</label>
+            <select
+              id="user-country"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              required
+            >
+              <option value="" disabled>{t('selectCountry')}</option>
+              {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <button type="submit" className="setup-submit-btn" disabled={!name.trim() || !country || isSaving}>
+            {isSaving ? <Spinner small /> : t('startMessaging')}
+          </button>
         </form>
       </div>
     </div>
@@ -1930,53 +2245,81 @@ const UserSetupScreen = ({ onSetupComplete, t }) => {
 
 
 const App = () => {
-  const [users, setUsers] = useState<Users>(() => JSON.parse(localStorage.getItem('app-users')) || initialUsers);
-  const [chats, setChats] = useState<Chat[]>(() => JSON.parse(localStorage.getItem('app-chats')) || initialChats);
-  const [channels, setChannels] = useState<Channel[]>(() => JSON.parse(localStorage.getItem('app-channels')) || initialChannels);
-  const [stories, setStories] = useState<StoryCollection[]>(() => JSON.parse(localStorage.getItem('app-stories')) || initialStories);
-  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>(() => {
-     const saved = localStorage.getItem('app-pending-requests');
-     return saved ? JSON.parse(saved).map(r => ({...r, date: new Date(r.date)})) : initialPendingRequests
-  });
-
-  const [adminSettings, setAdminSettings] = useState<AdminSettings>(() => JSON.parse(localStorage.getItem('app-admin-settings')) || { forceLocalNetwork: false, adsenseClientId: 'ca-pub-1234567890123456' });
-  const [userBalance, setUserBalance] = useState(() => parseFloat(localStorage.getItem('app-user-balance')) || 0);
-  const [isLocalNetwork, setIsLocalNetwork] = useState(() => JSON.parse(localStorage.getItem('app-is-local-network')) || false);
-
+  // --- STATE MANAGEMENT ---
+  const [users, setUsers] = useState<Users>({});
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [stories, setStories] = useState<StoryCollection[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>([]);
+  const [adminSettings, setAdminSettings] = useState<AdminSettings>({ forceLocalNetwork: false, adsenseClientId: '', requireProfileSetup: true, requireApprovalForNewUsers: true });
+  const [adminPassword, setAdminPassword] = useState<string | null>(null);
+  const [userBalance, setUserBalance] = useState(0);
+  const [isLocalNetwork, setIsLocalNetwork] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [premiumEndTime, setPremiumEndTime] = useState(0);
+  const [adsWatched, setAdsWatched] = useState(0);
+  const [storageUsed, setStorageUsed] = useState(0);
+  
   const [activePanel, setActivePanel] = useState('chats'); // chats, channels, menu
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null); // chat or channel id
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState('list'); // list, conversation
-  const [currentModal, setCurrentModal] = useState<string | null>(null); // newChannel, editProfile, addFriend, addStory, premium, admin, support, earnings
+  const [currentModal, setCurrentModal] = useState<string | null>(null);
   
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-
-  const [isPremium, setIsPremium] = useState(() => JSON.parse(localStorage.getItem('app-isPremium')) || false);
-  const [premiumEndTime, setPremiumEndTime] = useState(() => parseInt(localStorage.getItem('app-premiumEndTime') || '0'));
-  const [adsWatched, setAdsWatched] = useState(() => parseInt(localStorage.getItem('app-adsWatched') || '0'));
-  const [storageUsed, setStorageUsed] = useState(() => parseFloat(localStorage.getItem('app-storageUsed') || '0'));
+  const [isSending, setIsSending] = useState(false);
   
   const [storyViewerState, setStoryViewerState] = useState<{ isOpen: boolean, userId: string | null }>({ isOpen: false, userId: null });
 
+
   const { t, lang, setLang } = useI18N();
   const currentUser = users['user-0'];
-  const isProfileSetup = currentUser && currentUser.name !== 'Me';
 
-  // Persist state to localStorage
-  useEffect(() => { localStorage.setItem('app-users', JSON.stringify(users)); }, [users]);
-  useEffect(() => { localStorage.setItem('app-chats', JSON.stringify(chats)); }, [chats]);
-  useEffect(() => { localStorage.setItem('app-channels', JSON.stringify(channels)); }, [channels]);
-  useEffect(() => { localStorage.setItem('app-stories', JSON.stringify(stories)); }, [stories]);
-  useEffect(() => { localStorage.setItem('app-pending-requests', JSON.stringify(pendingRequests)); }, [pendingRequests]);
-  useEffect(() => { localStorage.setItem('app-isPremium', JSON.stringify(isPremium)); }, [isPremium]);
-  useEffect(() => { localStorage.setItem('app-premiumEndTime', premiumEndTime.toString()); }, [premiumEndTime]);
-  useEffect(() => { localStorage.setItem('app-adsWatched', adsWatched.toString()); }, [adsWatched]);
-  useEffect(() => { localStorage.setItem('app-storageUsed', storageUsed.toString()); }, [storageUsed]);
-  useEffect(() => { localStorage.setItem('app-admin-settings', JSON.stringify(adminSettings)); }, [adminSettings]);
-  useEffect(() => { localStorage.setItem('app-user-balance', userBalance.toString()); }, [userBalance]);
-  useEffect(() => { localStorage.setItem('app-is-local-network', JSON.stringify(isLocalNetwork)); }, [isLocalNetwork]);
+  const showToast = useCallback((message: string) => {
+      setToastMessage(message);
+  }, []);
 
+  // --- DATA FETCHING & INITIALIZATION ---
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await api.getInitialData();
+      // Add fallbacks to prevent crashes from incomplete API responses
+      setUsers(data.users || {});
+      setChats(data.chats || []);
+      setChannels(data.channels || []);
+      setStories(data.stories || []);
+      setPendingRequests(data.pendingRequests || []);
+      setAdminSettings(data.adminSettings || { forceLocalNetwork: false, adsenseClientId: '', requireProfileSetup: true, requireApprovalForNewUsers: true });
+      setAdminPassword(data.adminPassword || null);
+      setUserBalance(data.userBalance || 0);
+      setIsLocalNetwork(data.isLocalNetwork || false);
+      setIsPremium(data.isPremium || false);
+      setPremiumEndTime(data.premiumEndTime || 0);
+      setAdsWatched(data.adsWatched || 0);
+      setStorageUsed(data.storageUsed || 0);
+    } catch (error) {
+      console.error("Failed to load initial data:", error);
+      // Fallback to offline mode instead of showing a blocking error
+      showToast(t('apiError')); // Non-blocking toast
+      setUsers({ 'user-0': { id: 'user-0', name: 'Offline User', avatar: 'https://i.pravatar.cc/150?u=user-0', role: 'admin', country: '', status: 'active' } });
+      setAdminSettings({ forceLocalNetwork: false, adsenseClientId: '', requireProfileSetup: false, requireApprovalForNewUsers: true });
+      setChats([]);
+      setChannels([]);
+      setStories([]);
+      setPendingRequests([]);
+      // No need to set setError, which would block the UI
+    } finally {
+      setIsLoading(false);
+    }
+  }, [showToast, t]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // Toast timeout
   useEffect(() => {
@@ -1990,34 +2333,56 @@ const App = () => {
   useEffect(() => {
     let interval: any;
     if (isPremium) {
-        interval = setInterval(() => {
-            const now = Date.now();
-            if (now >= premiumEndTime) {
-                setIsPremium(false);
-                setAdsWatched(0);
-                setStorageUsed(0);
-                // Maybe clear saved messages from state
+        interval = setInterval(async () => {
+            try {
+                const stillPremium = await api.checkAndExpirePremium();
+                if (!stillPremium) {
+                    setIsPremium(false);
+                    setAdsWatched(0);
+                    setStorageUsed(0);
+                }
+            } catch (error) {
+                 console.error("Failed to check premium status:", error);
+                 // Don't toast here to avoid spamming the user
             }
-        }, 1000);
+        }, 5000); // Check every 5 seconds
     }
     return () => clearInterval(interval);
-  }, [isPremium, premiumEndTime]);
+  }, [isPremium]);
 
 
-  // Simulate initial loading
-  useEffect(() => {
-    setTimeout(() => setIsLoading(false), 1500);
-  }, []);
+  // --- WRAPPED API HANDLERS with Error Handling ---
+  const handleApiCall = useCallback(async (apiFunction: () => Promise<any>, successCallback?: (result: any) => void, successMessage?: string) => {
+    try {
+        const result = await apiFunction();
+        if (successCallback) {
+            successCallback(result);
+        }
+        if (successMessage) {
+            showToast(successMessage);
+        }
+        return result;
+    } catch (error) {
+        console.error("API call failed:", error);
+        showToast(t('apiError'));
+        return null; // Indicate failure
+    }
+  }, [showToast, t]);
 
+
+  // --- EVENT HANDLERS ---
+  const handlePanelChange = (panel: string) => {
+    // Changing the main panel should always bring the user back to the list view,
+    // which is especially important on mobile where views are stacked.
+    setCurrentView('list');
+    setActivePanel(panel);
+  };
+  
   const handleSelectConversation = (id: string) => {
     setActiveConversationId(id);
     setCurrentView('conversation');
   };
   
-  const handlePanelSelection = (panel: string) => {
-      setActivePanel(panel);
-  }
-
   const handleGoBackToList = () => {
     setActiveConversationId(null);
     setCurrentView('list');
@@ -2027,236 +2392,253 @@ const App = () => {
     setActivePanel('chats');
   };
   
-  const handleProfileSetup = (name: string, avatar: string) => {
-    setUsers(prev => ({...prev, 'user-0': { ...prev['user-0'], name, avatar }}));
+  const handleProfileSetup = (name: string, avatar: string, country: string) => {
+    handleApiCall(
+        () => api.setupProfile(name, avatar, country),
+        (updatedUser) => {
+            setUsers(prev => ({...prev, 'user-0': updatedUser }));
+            localStorage.setItem('qamar-profile-setup', 'true');
+        }
+    );
   };
 
   const handleEditProfile = (updatedUser: User) => {
-    setUsers(prev => ({ ...prev, [updatedUser.id]: updatedUser }));
-    setToastMessage(t('profileSaved'));
+    handleApiCall(
+        () => api.updateProfile(updatedUser),
+        () => setUsers(prev => ({ ...prev, [updatedUser.id]: updatedUser })),
+        t('profileSaved')
+    );
   };
 
   const handleRequestChannel = (name: string) => {
-    const channelId = `channel-${Date.now()}`;
-    const newRequest: PendingRequest = {
-        id: `req-${Date.now()}`,
-        type: 'channel',
-        fromUserId: 'user-0',
-        date: new Date(),
-        channelName: name,
-        channelId: channelId
-    };
-    const newChannel: Channel = {
-        id: channelId,
-        name,
-        avatar: `https://i.pravatar.cc/150?u=${name}`,
-        messages: [],
-        unread: 0,
-        status: 'pending'
-    };
-    setChannels(prev => [...prev, newChannel]);
-    setPendingRequests(prev => [...prev, newRequest]);
-    setToastMessage(t('channelRequestSent'));
+    handleApiCall(
+        () => api.requestChannel(name),
+        ({ newChannel, newRequest }) => {
+            setChannels(prev => [...prev, newChannel]);
+            setPendingRequests(prev => [...prev, newRequest]);
+        },
+        t('channelRequestSent')
+    );
   };
   
-  const handleAddFriend = (friendId: string) => {
-    // In a real app, you'd find the user by ID and send a request
-    // Here we'll just simulate it.
-    const newRequest: PendingRequest = {
-        id: `req-${Date.now()}`,
-        type: 'friend',
-        fromUserId: 'user-0',
-        date: new Date()
-    };
-    setPendingRequests(prev => [...prev, newRequest]);
-    setToastMessage(t('friendRequestSent'));
+  const handleCreateUser = (name: string, country: string) => {
+    const isApprovalRequired = adminSettings.requireApprovalForNewUsers;
+    handleApiCall(
+        () => api.createUser(name, country),
+        ({ users, chats, request }) => {
+            setUsers(users);
+            if (chats) setChats(chats);
+            if (request) {
+                setPendingRequests(prev => [...prev, { ...request, date: new Date(request.date) }]);
+            }
+        },
+        isApprovalRequired ? t('userCreateRequestSent') : t('userCreated')
+    );
   };
   
-  const handlePostStory = (content: string, file: File | null) => {
+  const handlePostStory = async (content: string, file: File | null) => {
     const storyType = file ? (file.type.startsWith('image/') ? 'image' : 'video') : 'text';
-    const newStory: Story = {
+    const newStory: Omit<Story, 'mediaUrl'> & { mediaUrl?: string } = {
         id: `story-${Date.now()}`,
         type: storyType,
         content: content,
     };
 
-    const postStory = (mediaUrl?: string) => {
+    const postStoryWithMedia = async (mediaUrl?: string) => {
         if(mediaUrl) newStory.mediaUrl = mediaUrl;
-        
-        setStories(prev => {
-            const myStories = prev.find(s => s.userId === 'user-0');
-            if (myStories) {
-                myStories.stories.push(newStory);
-                return [...prev];
-            }
-            return [...prev, { userId: 'user-0', stories: [newStory] }];
-        });
-        setToastMessage(t('storyPosted'));
+        handleApiCall(
+            () => api.postStory(newStory as Story),
+            (updatedStories) => setStories(updatedStories),
+            t('storyPosted')
+        );
     };
 
     if (file) {
         const reader = new FileReader();
         reader.onload = (event) => {
-            postStory(event.target?.result as string);
+            postStoryWithMedia(event.target?.result as string);
         };
         reader.readAsDataURL(file);
     } else {
-        postStory();
+        postStoryWithMedia();
     }
   };
   
-  const handleViewStories = (userId: string) => {
-      setStoryViewerState({ isOpen: true, userId });
-  };
+  const handleViewStories = (userId: string) => setStoryViewerState({ isOpen: true, userId });
+  const handleCloseStoryViewer = () => setStoryViewerState({ isOpen: false, userId: null });
   
-  const handleCloseStoryViewer = () => {
-       setStoryViewerState({ isOpen: false, userId: null });
-  };
-  
-  const handleStoryNextUser = () => {
+  const handleStoryNavigation = (direction: 'next' | 'prev') => {
     const usersWithStories = ['user-0', ...Object.keys(users).filter(id => id !== 'user-0' && stories.some(s => s.userId === id))];
     const currentIndex = usersWithStories.findIndex(id => id === storyViewerState.userId);
-    if(currentIndex < usersWithStories.length - 1) {
-        setStoryViewerState({isOpen: true, userId: usersWithStories[currentIndex + 1]});
-    } else {
-        handleCloseStoryViewer();
-    }
-  };
-  
-  const handleStoryPrevUser = () => {
-    const usersWithStories = ['user-0', ...Object.keys(users).filter(id => id !== 'user-0' && stories.some(s => s.userId === id))];
-    const currentIndex = usersWithStories.findIndex(id => id === storyViewerState.userId);
-    if(currentIndex > 0) {
-        setStoryViewerState({isOpen: true, userId: usersWithStories[currentIndex - 1]});
+    const nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+
+    if (nextIndex >= 0 && nextIndex < usersWithStories.length) {
+        setStoryViewerState({ isOpen: true, userId: usersWithStories[nextIndex] });
     } else {
         handleCloseStoryViewer();
     }
   };
 
   const handleUnlockPremium = () => {
-    setAdsWatched(prev => {
-      const newCount = Math.min(prev + 1, 3);
-      if (newCount === 3 && !isPremium) {
-        setIsPremium(true);
-        setPremiumEndTime(Date.now() + 24 * 60 * 60 * 1000);
-        setToastMessage(t('premiumUnlocked'));
-      }
-      return newCount;
-    });
+    handleApiCall(
+        () => api.unlockPremiumTask(),
+        (result) => {
+            setAdsWatched(result.newCount);
+            if (result.isNowPremium && result.premiumEndTime) {
+              setIsPremium(true);
+              setPremiumEndTime(result.premiumEndTime);
+              showToast(t('premiumUnlocked'));
+            }
+        }
+    );
   };
 
-    const handleSendMessage = (text: string) => {
-        if (!activeConversationId) return;
+  const handleSendMessage = async (text: string) => {
+      if (!activeConversationId || isSending) return;
 
-        const newMessage: Message = {
-            id: Date.now(),
-            text,
-            sender: 'user-0',
-            timestamp: Date.now(),
-        };
+      const isChannel = activePanel === 'channels';
+      
+      setIsSending(true);
+      if (!isChannel) setIsTyping(true);
 
-        if (activePanel === 'chats') {
-            setChats(prev => prev.map(c =>
-                c.id === activeConversationId
-                    ? { ...c, messages: [...c.messages, newMessage] }
-                    : c
-            ));
-            
-            setIsTyping(true);
-            setTimeout(() => {
-                setChats(prev => {
-                    const currentChat = prev.find(c => c.id === activeConversationId);
-                    if (!currentChat) return prev;
+      const result = await handleApiCall(() => api.sendMessage(activeConversationId, text, isChannel));
+      
+      setIsSending(false);
+      setIsTyping(false);
 
-                    const replyMessage: Message = {
-                        id: Date.now(),
-                        text: `This is a simulated reply to: "${text}"`,
-                        sender: currentChat.userId,
-                        timestamp: Date.now(),
-                    };
-
-                    setIsTyping(false);
-                    return prev.map(c =>
-                        c.id === activeConversationId
-                            ? { ...c, messages: [...c.messages, replyMessage] }
-                            : c
-                    );
-                });
-            }, 1500 + Math.random() * 1000);
-
+      if(result) {
+        if (isChannel) {
+          setChannels(prev => prev.map(c => c.id === activeConversationId ? { ...c, messages: [...c.messages, result.sentMessage] } : c));
         } else {
-            setChannels(prev => prev.map(c => c.id === activeConversationId ? { ...c, messages: [...c.messages, newMessage] } : c));
+          setChats(prev => prev.map(c =>
+              c.id === activeConversationId
+                  ? { ...c, messages: [...c.messages, result.sentMessage, result.replyMessage!] }
+                  : c
+          ));
         }
-    };
+      }
+  };
 
   const handleUserEarn = () => {
-    const amount = 0.02; // Fixed amount for simulation
-    const newBalance = userBalance + amount;
-    setUserBalance(newBalance);
-    setToastMessage(t('earnedCredit', {
-        amount: `$${amount.toFixed(2)}`,
-        balance: `$${newBalance.toFixed(2)}`
-    }));
+    const currentBalance = userBalance;
+    handleApiCall(
+        () => api.earnCredits(),
+        ({ newBalance }) => {
+            const amount = newBalance - currentBalance;
+            setUserBalance(newBalance);
+            showToast(t('earnedCredit', {
+                amount: `$${amount.toFixed(2)}`,
+                balance: `$${newBalance.toFixed(2)}`
+            }));
+        }
+    );
   };
-  
 
-  // Admin panel functions
-  const handleUpdateUserRole = (userId: string) => {
-    setUsers(prev => ({
-        ...prev,
-        [userId]: { ...prev[userId], role: prev[userId].role === 'admin' ? 'user' : 'admin' }
-    }));
-    setToastMessage(t('userRoleUpdated'));
+  const handleUpdateUserRole = (userId: string, role: 'admin' | 'user') => {
+    handleApiCall(
+        () => api.updateUserRole(userId, role),
+        (updatedUsers) => setUsers(updatedUsers),
+        t('userRoleUpdated')
+    );
   };
   
   const handleSaveAdminSettings = (newSettings: AdminSettings) => {
-    setAdminSettings(newSettings);
-    setToastMessage(t('settingsSaved'));
+    handleApiCall(
+        () => api.saveAdminSettings(newSettings),
+        () => setAdminSettings(newSettings),
+        t('settingsSaved')
+    );
   };
 
   const handleApproveRequest = (reqId: string) => {
-    const request = pendingRequests.find(r => r.id === reqId);
-    if (!request) return;
-
-    if (request.type === 'channel' && request.channelId) {
-        setChannels(prev => prev.map(c => c.id === request.channelId ? { ...c, status: 'approved' } : c));
-    } else if (request.type === 'friend') {
-        const friendId = request.fromUserId;
-        const chatExists = chats.some(c => c.userId === friendId);
-
-        if (!chatExists && users[friendId]) {
-            const newChat: Chat = {
-                id: `chat-${Date.now()}`,
-                userId: friendId,
-                messages: [
-                    {
-                        id: Date.now(),
-                        text: `You are now connected with ${users[friendId].name}. Say hi!`,
-                        sender: 'user-0',
-                        timestamp: Date.now(),
-                    }
-                ],
-                unread: 0,
-            };
-            setChats(prev => [newChat, ...prev]);
-        }
-    }
-    setPendingRequests(prev => prev.filter(r => r.id !== reqId));
-    setToastMessage(t('requestApproved'));
+    handleApiCall(
+        () => api.approveRequest(reqId),
+        ({ requests, channels, chats, users }) => {
+            setPendingRequests(requests);
+            setChannels(channels);
+            setChats(chats);
+            setUsers(users);
+        },
+        t('requestApproved')
+    );
   };
 
   const handleRejectRequest = (reqId: string) => {
-    const request = pendingRequests.find(r => r.id === reqId);
-     if (request && request.type === 'channel' && request.channelId) {
-        setChannels(prev => prev.filter(c => c.id !== request.channelId));
+    handleApiCall(
+        () => api.rejectRequest(reqId),
+        ({ requests, channels, users }) => {
+            setPendingRequests(requests);
+            setChannels(channels);
+            setUsers(users);
+        },
+        t('requestRejected')
+    );
+  };
+  
+  const handleToggleNetwork = () => {
+    handleApiCall(
+        () => api.toggleLocalNetwork(),
+        (newState) => setIsLocalNetwork(newState)
+    );
+  };
+  
+  const handleShowAdminPanel = () => {
+    if (adminPassword) {
+        const enteredPassword = prompt(t('enterAdminPassword'));
+        if (enteredPassword === adminPassword) {
+            setCurrentModal('admin');
+        } else if (enteredPassword !== null) { // Check for cancel button
+            showToast(t('incorrectPassword'));
+        }
+    } else {
+        setCurrentModal('admin');
     }
-    setPendingRequests(prev => prev.filter(r => r.id !== reqId));
-    setToastMessage(t('requestRejected'));
   };
 
+  const handleChangePassword = async (current: string, newPass: string): Promise<string | null> => {
+    const result = await api.changeAdminPassword(current, newPass);
+    if (result.success) {
+      setAdminPassword(newPass);
+      showToast(t('passwordUpdated'));
+      return null;
+    } else {
+      return result.error || 'incorrectPassword';
+    }
+  };
 
-  if (isLoading) return <LoadingScreen />;
-  if (!isProfileSetup) return <LanguageProvider><UserSetupScreen onSetupComplete={handleProfileSetup} t={t} /></LanguageProvider>;
+  const handleRemovePassword = async (current: string): Promise<string | null> => {
+    const result = await api.removeAdminPassword(current);
+    if (result.success) {
+      setAdminPassword(null);
+      showToast(t('passwordRemoved'));
+      return null;
+    } else {
+      return result.error || 'incorrectPassword';
+    }
+  };
+
+  // --- RENDER LOGIC ---
+  if (isLoading) {
+    return <LoadingScreen />;
+  }
+
+  if (error) {
+      return <ErrorScreen messageKey={error} onRetry={loadData} />;
+  }
+  
+  // Determine if the user's profile is fully set up based on the loaded data.
+  const isProfileSetup = currentUser && currentUser.name !== 'Me' && currentUser.country;
+  
+  // Show the setup screen if the admin requires it AND it's not yet completed.
+  if (adminSettings.requireProfileSetup && !isProfileSetup) {
+    return <UserSetupScreen onSetupComplete={handleProfileSetup} t={t} />;
+  }
+  
+  // If we are not loading and have no user object, something is wrong.
+  // This could happen in offline mode if the fallback fails.
+  if (!currentUser) {
+      return <LoadingScreen />;
+  }
 
   const activeConversation = 
     activePanel === 'chats' 
@@ -2264,19 +2646,17 @@ const App = () => {
     : channels.find(c => c.id === activeConversationId);
     
   const timeRemaining = isPremium ? Math.floor((premiumEndTime - Date.now()) / 1000) : 0;
-  
   const storyCollection = stories.find(s => s.userId === storyViewerState.userId);
-  
   const effectiveIsLocalNetwork = adminSettings.forceLocalNetwork || isLocalNetwork;
 
   return (
       <div className="app-container">
-        <Sidebar activePanel={activePanel} setActivePanel={handlePanelSelection} t={t} currentUser={currentUser} />
+        <Sidebar activePanel={activePanel} setActivePanel={handlePanelChange} t={t} currentUser={currentUser} />
 
         <main className="main-content" style={{ display: currentView === 'list' ? 'block' : 'none' }}>
-            {activePanel === 'chats' && <ChatListPanel chats={chats} users={users} activeChatId={activeConversationId} onSelectChat={handleSelectConversation} onAddFriend={() => setCurrentModal('addFriend')} onAddStory={() => setCurrentModal('addStory')} onStoryView={handleViewStories} stories={stories} t={t} />}
+            {activePanel === 'chats' && <ChatListPanel chats={chats} users={users} activeChatId={activeConversationId} onSelectChat={handleSelectConversation} onCreateUser={() => setCurrentModal('createUser')} onAddStory={() => setCurrentModal('addStory')} onStoryView={handleViewStories} stories={stories} t={t} />}
             {activePanel === 'channels' && <ChannelListPanel channels={channels} activeChannelId={activeConversationId} onSelectChannel={handleSelectConversation} onNewChannelRequest={() => setCurrentModal('newChannel')} t={t} />}
-            {activePanel === 'menu' && <MenuPanel currentUser={currentUser} onEditProfile={() => setCurrentModal('editProfile')} onShowPremium={() => setCurrentModal('premium')} onShowAdmin={() => setCurrentModal('admin')} onShowSettings={() => {}} onShowSupport={() => setCurrentModal('support')} onShowEarnings={() => setCurrentModal('earnings')} t={t} onGoBack={handleGoBackToMainPanels} isPremium={isPremium} onLogout={() => {}} lang={lang} setLang={setLang} isLocalNetwork={effectiveIsLocalNetwork} onToggleNetwork={() => setIsLocalNetwork(p => !p)} />}
+            {activePanel === 'menu' && <MenuPanel currentUser={currentUser} onEditProfile={() => setCurrentModal('editProfile')} onShowPremium={() => setCurrentModal('premium')} onShowAdmin={handleShowAdminPanel} onShowSettings={() => {}} onShowSupport={() => setCurrentModal('support')} onShowEarnings={() => setCurrentModal('earnings')} t={t} onGoBack={handleGoBackToMainPanels} isPremium={isPremium} onLogout={() => {}} lang={lang} setLang={setLang} isLocalNetwork={effectiveIsLocalNetwork} onToggleNetwork={handleToggleNetwork} isNetworkToggleDisabled={adminSettings.forceLocalNetwork} />}
         </main>
         
         {isPremium && activePanel !== 'menu' && (
@@ -2285,12 +2665,12 @@ const App = () => {
             </div>
         )}
 
-        <ChatWindow active={currentView === 'conversation'} onBack={handleGoBackToList} chat={activeConversation} users={users} t={t} onSendMessage={handleSendMessage} isTyping={isTyping && activeConversation?.id === activeConversationId} />
+        <ChatWindow active={currentView === 'conversation'} onBack={handleGoBackToList} chat={activeConversation} users={users} t={t} onSendMessage={handleSendMessage} isTyping={isTyping && activeConversation?.id === activeConversationId} isSending={isSending && activeConversation?.id === activeConversationId} />
 
         {/* Modals */}
         <NewChannelModal isOpen={currentModal === 'newChannel'} onClose={() => setCurrentModal(null)} onSubmit={handleRequestChannel} t={t} />
-        <EditProfileModal isOpen={currentModal === 'editProfile'} onClose={() => setCurrentModal(null)} user={currentUser} onSave={handleEditProfile} t={t} />
-        <AddFriendModal isOpen={currentModal === 'addFriend'} onClose={() => setCurrentModal(null)} onAdd={handleAddFriend} t={t} />
+        {currentUser && <EditProfileModal isOpen={currentModal === 'editProfile'} onClose={() => setCurrentModal(null)} user={currentUser} onSave={handleEditProfile} t={t} />}
+        <CreateUserModal isOpen={currentModal === 'createUser'} onClose={() => setCurrentModal(null)} onCreate={handleCreateUser} t={t} />
         <AddStoryModal isOpen={currentModal === 'addStory'} onClose={() => setCurrentModal(null)} onPost={handlePostStory} t={t} />
         <PremiumModal isOpen={currentModal === 'premium'} onClose={() => setCurrentModal(null)} onUnlock={handleUnlockPremium} adsWatched={adsWatched} t={t} />
         <SupportModal isOpen={currentModal === 'support'} onClose={() => setCurrentModal(null)} t={t} />
@@ -2306,8 +2686,9 @@ const App = () => {
             onRejectRequest={handleRejectRequest}
             settings={adminSettings}
             onSaveSettings={handleSaveAdminSettings}
-            onChangePassword={() => null}
-            onRemovePassword={() => {}}
+            onChangePassword={handleChangePassword}
+            onRemovePassword={handleRemovePassword}
+            hasPassword={!!adminPassword}
         />
         
         {storyViewerState.isOpen && storyCollection && (
@@ -2315,14 +2696,14 @@ const App = () => {
                 collection={storyCollection}
                 users={users} 
                 onClose={handleCloseStoryViewer}
-                onNextUser={handleStoryNextUser}
-                onPrevUser={handleStoryPrevUser}
+                onNextUser={() => handleStoryNavigation('next')}
+                onPrevUser={() => handleStoryNavigation('prev')}
             />
         )}
         
         <Toast message={toastMessage} />
 
-        <BottomNavBar activePanel={activePanel} setActivePanel={handlePanelSelection} t={t} />
+        <BottomNavBar activePanel={activePanel} setActivePanel={handlePanelChange} t={t} />
       </div>
   );
 };
